@@ -42,6 +42,8 @@ state, seq = gen_data(BATCH_SIZE, device)
 # Warm-up
 model = AUVTraj().to(device)
 
+torch.save(model.state_dict(), "model.pth")
+
 # Export the model
 torch.onnx.export(model,
         args=(state, seq),

@@ -14,6 +14,10 @@ from onnxruntime import InferenceSession
 
 from network_utils import load_onnx_model, create_onnx_bound_model
 
+from utile import to_euler
+from utile import plot_traj
+import matplotlib.pyplot as plt
+
 gpu_ok = False
 if torch.cuda.is_available():
     device_cap = torch.cuda.get_device_capability()
@@ -63,6 +67,7 @@ state, seq = gen_data(BATCH_SIZE, device)
 
 # Warm-up
 model = AUVTraj().to(device)
+model.load_state_dict(torch.load("model.pth"))
 
 def to_numpy(tensor):
     return tensor.detach().cpu().numpy() if tensor.requires_grad else tensor.cpu().numpy()
@@ -71,62 +76,105 @@ onnx_model_filename = "./model.onnx"
 
 #####################  Normal ONNX run #######################
 ort_session = load_onnx_model(onnx_model_filename, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-bind_session, io_binding = create_onnx_bound_model(onnx_model_filename, state, seq, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+# bind_session, io_binding = create_onnx_bound_model(onnx_model_filename, state, seq, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
 ort_inputs = {ort_session.get_inputs()[0].name: to_numpy(state), ort_session.get_inputs()[1].name: to_numpy(seq)}
 
+pred_trajs, pred_vels, pred_dvs = evaluate(model, state, seq)
 
-print("eager:", timed(lambda: evaluate(model, state, seq))[1])
-print("compile:", timed(lambda: evaluate_opt(model, state, seq))[1])
-print("onnx:", timed(lambda: ort_session.run(None, ort_inputs))[1])
-print("onnx bind:", timed(lambda: bind_session.run_with_iobinding(io_binding))[1])
+pred2_trajs, pred2_vels, pred2_dvs = ort_session.run(None, ort_inputs)
 
 
-eager_times = []
-compile_times = []
-onnx_times = []
-onnx_bind_times = []
-for i in range(N_ITERS):
-    _, eager_time = timed(lambda: evaluate(model, state, seq))
-    eager_times.append(eager_time)
-    print(f"eager eval time {i}: {eager_time}")
 
-print("~" * 10)
+# pred_trajs, pred_vels, pred_dvs = evaluate(model, state, seq)
+# pred2_trajs, pred2_vels, pred2_dvs = evaluate_opt(model, state, seq)
 
-compile_times = []
-for i in range(N_ITERS):
-    _, compile_time = timed(lambda: evaluate_opt(model, state, seq))
-    compile_times.append(compile_time)
-    print(f"compile eval time {i}: {compile_time}")
-print("~" * 10)
+# #print("pred_traj", pred_trajs.shape)
+# error_traj += loss(pred_trajs, traj)
+# error_vel += loss(pred_vels, vel)
+# error_dv += loss(pred_dvs, dv)
 
-onnx_times = []
-for i in range(N_ITERS):
-    _, onnx_time = timed(lambda:ort_session.run(None, ort_inputs))
-    onnx_times.append(onnx_time)
-    print(f"onnx eval time {i}: {onnx_time}")
-print("~" * 10)
+pred_trajs = pred_trajs.detach().cpu()
+pred_vels = pred_vels.detach().cpu()
+pred_dvs = pred_dvs.detach().cpu()
 
+print(pred_trajs.shape)
+print(pred2_trajs.shape)
 
-onnx_bind_times = []
-for i in range(N_ITERS):
-    _, onnx_time = timed(lambda:bind_session.run_with_iobinding(io_binding))
-    onnx_bind_times.append(onnx_time)
-    print(f"onnx eval time {i}: {onnx_time}")
-print("~" * 10)
+# pred2_trajs = pred2_trajs.detach().cpu()
+# pred2_vels = pred2_vels.detach().cpu()
+# pred2_dvs = pred2_dvs.detach().cpu()
+tau = 10
+# traj_euler = trajs_plot[0]
+
+pred_traj_euler = to_euler(pred_trajs[0].data)
+pred_traj_euler2 = to_euler(pred2_trajs[0])
+s_col = {"x": 0, "y": 1, "z": 2, "roll": 3, "pitch": 4, "yaw": 5}
+plot_traj({"pred": pred_traj_euler, "pred2": pred_traj_euler2}, s_col, tau, True, title="State")
+plt.show()
 
 
-eager_med = np.median(eager_times)
-compile_med = np.median(compile_times)
-onnx_med = np.median(onnx_times)
-onnx_bind_med = np.median(onnx_bind_times)
-speedup = eager_med / compile_med
-speedup_onnx = eager_med / onnx_med
-speedup_onnx_bind = eager_med / onnx_bind_med
-print(f"(eval) eager median: {eager_med}, compile median: {compile_med}, speedup: {speedup}x")
-print(f"(eval) eager median: {eager_med}, onnx median: {onnx_med}, speedup: {speedup_onnx}x")
-print(f"(eval) eager median: {eager_med}, onnx bind median: {onnx_bind_med}, speedup: {speedup_onnx_bind}x")
-print("~" * 10)
 
-prof_file = ort_session.end_profiling()
 
-print(prof_file)
+
+
+
+
+
+# pred2_trajs, pred2_vels, pred2_dvs = evaluate_opt(model, state, seq)
+
+
+# print("eager:", timed(lambda: evaluate(model, state, seq))[1])
+# print("compile:", timed(lambda: evaluate_opt(model, state, seq))[1])
+# print("onnx:", timed(lambda: ort_session.run(None, ort_inputs))[1])
+# print("onnx bind:", timed(lambda: bind_session.run_with_iobinding(io_binding))[1])
+
+
+# eager_times = []
+# compile_times = []
+# onnx_times = []
+# onnx_bind_times = []
+# for i in range(N_ITERS):
+#     _, eager_time = timed(lambda: evaluate(model, state, seq))
+#     eager_times.append(eager_time)
+#     print(f"eager eval time {i}: {eager_time}")
+
+# print("~" * 10)
+
+# compile_times = []
+# for i in range(N_ITERS):
+#     _, compile_time = timed(lambda: evaluate_opt(model, state, seq))
+#     compile_times.append(compile_time)
+#     print(f"compile eval time {i}: {compile_time}")
+# print("~" * 10)
+
+# onnx_times = []
+# for i in range(N_ITERS):
+#     _, onnx_time = timed(lambda:ort_session.run(None, ort_inputs))
+#     onnx_times.append(onnx_time)
+#     print(f"onnx eval time {i}: {onnx_time}")
+# print("~" * 10)
+
+
+# onnx_bind_times = []
+# for i in range(N_ITERS):
+#     _, onnx_time = timed(lambda:bind_session.run_with_iobinding(io_binding))
+#     onnx_bind_times.append(onnx_time)
+#     print(f"onnx eval time {i}: {onnx_time}")
+# print("~" * 10)
+
+
+# eager_med = np.median(eager_times)
+# compile_med = np.median(compile_times)
+# onnx_med = np.median(onnx_times)
+# onnx_bind_med = np.median(onnx_bind_times)
+# speedup = eager_med / compile_med
+# speedup_onnx = eager_med / onnx_med
+# speedup_onnx_bind = eager_med / onnx_bind_med
+# print(f"(eval) eager median: {eager_med}, compile median: {compile_med}, speedup: {speedup}x")
+# print(f"(eval) eager median: {eager_med}, onnx median: {onnx_med}, speedup: {speedup_onnx}x")
+# print(f"(eval) eager median: {eager_med}, onnx bind median: {onnx_bind_med}, speedup: {speedup_onnx_bind}x")
+# print("~" * 10)
+
+# prof_file = ort_session.end_profiling()
+
+# print(prof_file)
