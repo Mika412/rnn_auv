@@ -12,6 +12,8 @@ import onnxruntime
 from onnx import load_model, save_model
 from onnxruntime import InferenceSession
 
+from network_utils import load_onnx_model, create_onnx_bound_model
+
 gpu_ok = False
 if torch.cuda.is_available():
     device_cap = torch.cuda.get_device_capability()
@@ -65,53 +67,18 @@ model = AUVTraj().to(device)
 def to_numpy(tensor):
     return tensor.detach().cpu().numpy() if tensor.requires_grad else tensor.cpu().numpy()
 
-onnx_model_filename = "./model_optimized.onnx"
+onnx_model_filename = "./model.onnx"
 
 #####################  Normal ONNX run #######################
-opts = onnxruntime.SessionOptions()
-
-# opts.intra_op_num_threads = 2
-# opts.execution_mode = onnxruntime.ExecutionMode.ORT_SEQUENTIAL
-# opts.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_EXTENDED
-# opts.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
-# opts.enable_profiling = True
-# opts.log_severity_level = 0
-# opts.log_verbosity_level= 0
-
-ort_session = onnxruntime.InferenceSession(onnx_model_filename, opts, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+ort_session = load_onnx_model(onnx_model_filename, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+bind_session, io_binding = create_onnx_bound_model(onnx_model_filename, state, seq, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
 ort_inputs = {ort_session.get_inputs()[0].name: to_numpy(state), ort_session.get_inputs()[1].name: to_numpy(seq)}
 
-
-#####################  Normal ONNX Bind #######################
-bind_session = onnxruntime.InferenceSession(onnx_model_filename, opts, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-
-io_binding = bind_session.io_binding()
-
-io_binding.bind_input(
-    name=ort_session.get_inputs()[0].name,
-    device_type='cuda',
-    device_id=0,
-    element_type=np.float32,
-    buffer_ptr=state.data_ptr(),
-    shape=state.shape)
-
-io_binding.bind_input(
-    name=ort_session.get_inputs()[1].name,
-    device_type='cuda',
-    device_id=0,
-    element_type=np.float32,
-    buffer_ptr=seq.data_ptr(),
-    shape=seq.shape)
-
-io_binding.bind_output(
-    name=ort_session.get_outputs()[0].name,
-    device_type='cuda',
-    device_id=0,)
 
 print("eager:", timed(lambda: evaluate(model, state, seq))[1])
 print("compile:", timed(lambda: evaluate_opt(model, state, seq))[1])
 print("onnx:", timed(lambda: ort_session.run(None, ort_inputs))[1])
-print("onnx bind:", timed(lambda: ort_session.run(None, ort_inputs))[1])
+print("onnx bind:", timed(lambda: bind_session.run_with_iobinding(io_binding))[1])
 
 
 eager_times = []
